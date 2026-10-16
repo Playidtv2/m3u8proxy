@@ -2,9 +2,9 @@
 
 export const M3u8ProxyV1 = async (request: Request<unknown>) => {
   const url = new URL(request.url);
-  const refererUrl = decodeURIComponent(url.searchParams.get("referer") || "https://doodii.me");
+  const refererUrl = decodeURIComponent(url.searchParams.get("referer") || "https://kserietv.com");
   const targetUrl = decodeURIComponent(url.searchParams.get("url") || "");
-  const originUrl = decodeURIComponent(url.searchParams.get("origin") || "https://doodii.me");
+  const originUrl = decodeURIComponent(url.searchParams.get("origin") || "https://kserietv.com");
   const proxyAll = decodeURIComponent(url.searchParams.get("all") || "");
 
   if (!targetUrl) {
