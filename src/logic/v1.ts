@@ -1,55 +1,140 @@
 
-
-export const M3u8ProxyV1 = async (request: Request<unknown>) => {
+export const M3u8ProxyV1 = async (request: Request): Promise<Response> => {
   const url = new URL(request.url);
-  const refererUrl = decodeURIComponent(url.searchParams.get("referer") || "https://www.123-hdc.com/");
-  const targetUrl = decodeURIComponent(url.searchParams.get("url") || "");
-  const originUrl = decodeURIComponent(url.searchParams.get("origin") || "https://www.123-hdc.com");
-  const proxyAll = decodeURIComponent(url.searchParams.get("all") || "");
 
-  if (!targetUrl) {
-    return new Response("Invalid URL", { status: 400 });
+  // ค่าเริ่มต้น
+  const refererUrl =
+    url.searchParams.get("referer") || "http://kserietv.com/";
+
+  const targetUrl =
+    url.searchParams.get("url") ||
+    "https://vdohls.com/ah_V7Dxl9-6fJ/playlist.m3u8";
+
+  const originUrl =
+    url.searchParams.get("origin") || "https://vdohls.com";
+
+  const corsHeaders = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+  };
+
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
-  const response = await fetch(targetUrl, {
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, HEAD, POST, PUT, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-      Referer: refererUrl || "",
-      Origin: originUrl || "",
-    },
-  });
-
-  let modifiedM3u8;
-  if (targetUrl.includes(".m3u8")) {
-    modifiedM3u8 = await response.text();
-    const targetUrlTrimmed = `${encodeURIComponent(
-      targetUrl.replace(/([^/]+\.m3u8)$/, "").trim()
-    )}`;
-    const encodedUrl = encodeURIComponent(refererUrl);
-    const encodedOrigin = encodeURIComponent(originUrl);
-    modifiedM3u8 = modifiedM3u8.split("\n").map((line) => {
-      if (line.startsWith("#") || line.trim() == '') {
-        return line;
-      }
-      else if(proxyAll == 'yes' && line.startsWith('http')){ //https://yourproxy.com/?url=https://somevideo.m3u8&all=yes
-        return `${url.origin}?url=${line}`;
-      }
-      return `?url=${targetUrlTrimmed}${line}${originUrl ? `&origin=${encodedOrigin}` : ""
-      }${refererUrl ? `&referer=${encodedUrl}` : ""
-      }`;
-    }).join("\n");
+  // อนุญาตเฉพาะ URL แบบ HTTP/HTTPS
+  let target: URL;
+  try {
+    target = new URL(targetUrl);
+    if (!["http:", "https:"].includes(target.protocol)) {
+      throw new Error("Invalid protocol");
+    }
+  } catch {
+    return new Response("Invalid URL", {
+      status: 400,
+      headers: corsHeaders,
+    });
   }
 
-  return new Response(modifiedM3u8 || response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Content-Type":
-        response.headers?.get("Content-Type") ||
-        "application/vnd.apple.mpegurl",
-    },
+  try {
+    const response = await fetch(target.toString(), {
+      method: request.method === "HEAD" ? "HEAD" : "GET",
+      headers: {
+        Referer: refererUrl,
+        Origin: originUrl,
+      },
+      redirect: "follow",
+    });
+
+    const contentType =
+      response.headers.get("Content-Type") || "";
+
+    const isM3u8 =
+      /\.m3u8(?:$|[?#])/i.test(target.toString()) ||
+      contentType.includes("mpegurl");
+
+    const headers = new Headers(corsHeaders);
+    headers.set(
+      "Content-Type",
+      contentType || "application/vnd.apple.mpegurl"
+    );
+
+    if (!response.ok) {
+      return new Response(
+        request.method === "HEAD" ? null : `Upstream error: ${response.status}`,
+        { status: response.status, headers }
+      );
+    }
+
+    if (request.method === "HEAD") {
+      return new Response(null, {
+        status: response.status,
+        headers,
+      });
+    }
+
+    if (isM3u8) {
+      const playlist = await response.text();
+
+      // แปลง URL ของ playlist, segment และ key
+      const rewritten = playlist
+        .split(/\r?\n/)
+        .map((line) => {
+          const trimmed = line.trim();
+
+          if (!trimmed) return line;
+
+          if (trimmed.startsWith("#")) {
+            // รองรับ URI="..." ใน EXT-X-KEY และ EXT-X-MAP
+            return line.replace(
+              /URI="([^"]+)"/g,
+              (_match, uri) => {
+                const absolute = new URL(uri, target).toString();
+                return `URI="${makeProxyUrl(absolute, url.origin, refererUrl, originUrl)}"`;
+              }
+            );
+          }
+
+          const absolute = new URL(trimmed, target).toString();
+          return makeProxyUrl(
+            absolute,
+            url.origin,
+            refererUrl,
+            originUrl
+          );
+        })
+        .join("\n");
+
+      return new Response(rewritten, {
+        status: response.status,
+        headers,
+      });
+    }
+
+    return new Response(response.body, {
+      status: response.status,
+      headers,
+    });
+  } catch {
+    return new Response("Upstream request failed", {
+      status: 502,
+      headers: corsHeaders,
+    });
+  }
+};
+
+function makeProxyUrl(
+  target: string,
+  proxyOrigin: string,
+  referer: string,
+  origin: string
+): string {
+  const params = new URLSearchParams({
+    url: target,
+    referer,
+    origin,
   });
+
+  return `${proxyOrigin}/?${params.toString()}`;
 }
